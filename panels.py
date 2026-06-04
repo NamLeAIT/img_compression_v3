@@ -670,7 +670,7 @@ def render_panel_1_upload() -> None:
                     out_dir.mkdir(parents=True, exist_ok=True)
                     selected_path = out_dir / "selected_pixel_image_panel1.png"
                     im.save(selected_path)
-                    preview_file(str(selected_path), "Selected pixel image")
+                    preview_file(str(selected_path), "Raw image")
                     # Avoid pandas numpy alias at runtime by using explicit import inside the block.
                     import numpy as _np
                     if pixel_representation == "Black-white (1 bit/pixel)":
