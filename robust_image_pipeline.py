@@ -42,6 +42,46 @@ PIXEL_REPRESENTATIONS = [
 TUNABLE_METHODS = {"Base + WebP Detail", "Local Block Coding"}
 
 
+
+LOWRES_PRESETS: Dict[str, Dict[str, Any]] = {
+    "High quality": {
+        "downsample": 3,
+        "bits_per_channel": 6,
+    },
+    "Balanced": {
+        "downsample": 4,
+        "bits_per_channel": 5,
+    },
+    "High compression": {
+        "downsample": 6,
+        "bits_per_channel": 4,
+    },
+}
+
+SMART_DETAIL_PRESETS: Dict[str, Dict[str, Any]] = {
+    "High quality": {
+        "base_downsample": 4,
+        "base_bits": 6,
+        "keep_coeffs": 6,
+        "coeff_bits": 8,
+        "q_step": 6.0,
+    },
+    "Balanced": {
+        "base_downsample": 4,
+        "base_bits": 5,
+        "keep_coeffs": 4,
+        "coeff_bits": 8,
+        "q_step": 8.0,
+    },
+    "High compression": {
+        "base_downsample": 6,
+        "base_bits": 5,
+        "keep_coeffs": 3,
+        "coeff_bits": 8,
+        "q_step": 10.0,
+    },
+}
+
 HYBRID_PRESETS: Dict[str, Dict[str, Any]] = {
     "High quality": {
         "tile_size": 128,
@@ -258,9 +298,22 @@ def image_payload_to_dna(payload_bytes: bytes, meta: Dict[str, Any]) -> str:
     return dna
 
 
+
 def _params_for_method(method: str, level: str, custom_params: Dict[str, Any] | None = None) -> Dict[str, Any]:
     internal = _internal_method(method)
     custom_params = custom_params or {}
+
+    if internal == "robust_low_resolution_image":
+        params = dict(LOWRES_PRESETS.get(level, LOWRES_PRESETS["Balanced"]))
+        if level == "Custom":
+            params.update(custom_params)
+        return params
+
+    if internal == "base_image_local_detail":
+        params = dict(SMART_DETAIL_PRESETS.get(level, SMART_DETAIL_PRESETS["Balanced"]))
+        if level == "Custom":
+            params.update(custom_params)
+        return params
 
     if internal == "base_webp_detail_tunable":
         params = dict(HYBRID_PRESETS.get(level, HYBRID_PRESETS["Balanced"]))
@@ -275,7 +328,6 @@ def _params_for_method(method: str, level: str, custom_params: Dict[str, Any] | 
         return params
 
     return {}
-
 
 def _pixel_meta_prefixed(pix_meta: Dict[str, Any]) -> Dict[str, Any]:
     return {
@@ -327,14 +379,33 @@ def encode_image_to_payload(
 
     params = _params_for_method(method, compression_level, custom_params)
 
-    # Method family 1: fixed methods from dna_four_methods.py
-    if internal in {"robust_low_resolution_image", "base_image_local_detail"}:
-        dna, four_meta = fourcodec.encode_by_method(str(selected_path), internal)
-        impl_meta = dict(four_meta.get("impl_meta", {}))
+    # Method family 1: methods from dna_four_methods.py, now with app-level presets.
+    if internal == "robust_low_resolution_image":
+        impl = fourcodec._load_impl("three_new")
+        dna, impl_meta = impl.encode_base_only_resize_quant(
+            str(selected_path),
+            downsample=int(params["downsample"]),
+            bits_per_channel=int(params["bits_per_channel"]),
+        )
+        four_meta = {
+            "wrapper_version": getattr(fourcodec, "__version__", ""),
+            "method": internal,
+            "display_name": "Robust Low-Resolution",
+            "simple_explanation": "Stores only a small quantized image. Very robust, but blurry.",
+            "role": "ultra_robust_baseline",
+            "implementation": "three_new.encode_base_only_resize_quant",
+            "impl_meta": impl_meta,
+            "payload_bytes": float(impl_meta.get("payload_bytes", 0)),
+            "dna_nt": int(impl_meta.get("dna_nt", 0)),
+            "dna_pad": int(impl_meta.get("dna_pad", 0)),
+            "raw_dna_nt": float(impl_meta.get("raw_dna_nt", 0)),
+            "dna_reduction_vs_raw_pixels": float(impl_meta.get("dna_reduction_vs_raw_pixels", 0)),
+            "payload_vs_original_file": float(impl_meta.get("payload_vs_original_file", 0)),
+            "original_file_bytes": int(impl_meta.get("original_file_bytes", 0)),
+        }
         payload_bits = int(impl_meta.get("payload_bits", 0))
         payload_bytes = _payload_bytes_from_dna(dna, {"payload_bits": payload_bits, "dna_pad": four_meta.get("dna_pad", impl_meta.get("dna_pad", 0))})
-
-        display = METHOD_INTERNAL_TO_DISPLAY.get(internal, four_meta.get("display_name", method))
+        display = "Robust Low-Resolution"
         meta = dict(four_meta)
         meta.update({
             "app_layer": "robust_image_payload",
@@ -342,9 +413,58 @@ def encode_image_to_payload(
             "method": internal,
             "method_display": display,
             "display_name": display,
-            "compression_level": "Fixed",
-            "compression_fixed": True,
-            "params": {},
+            "compression_level": compression_level,
+            "compression_fixed": False,
+            "params": params,
+            "payload_bits": int(payload_bits),
+            "payload_bytes_exact": float(payload_bits / 8),
+            "payload_container_bytes": int(len(payload_bytes)),
+            "payload_byte_pad_bits": int(len(payload_bytes) * 8 - payload_bits),
+            "selected_pixel_preview_path": str(selected_path),
+            **_pixel_meta_prefixed(pix_meta),
+        })
+
+    elif internal == "base_image_local_detail":
+        impl = fourcodec._load_impl("smart")
+        custom_name = "_app_smart_base_residual_custom"
+        impl.PRESETS[custom_name] = {
+            "method_type": "smart_base_residual",
+            "base_downsample": int(params["base_downsample"]),
+            "base_bits": int(params["base_bits"]),
+            "keep_coeffs": int(params["keep_coeffs"]),
+            "coeff_bits": int(params["coeff_bits"]),
+            "q_step": float(params["q_step"]),
+        }
+        dna, impl_meta = impl.encode_image(str(selected_path), method=custom_name)
+        four_meta = {
+            "wrapper_version": getattr(fourcodec, "__version__", ""),
+            "method": internal,
+            "display_name": "Base + Local Detail",
+            "simple_explanation": "Stores a robust base image and adds local detail. If detail is damaged, that region falls back to the base.",
+            "role": "main_proposed_method",
+            "implementation": "smart.encode_image/app_custom",
+            "impl_meta": impl_meta,
+            "payload_bytes": float(impl_meta.get("payload_bytes", 0)),
+            "dna_nt": int(impl_meta.get("dna_nt", 0)),
+            "dna_pad": int(impl_meta.get("dna_pad", 0)),
+            "raw_dna_nt": float(impl_meta.get("raw_dna_nt", 0)),
+            "dna_reduction_vs_raw_pixels": float(impl_meta.get("dna_reduction_vs_raw_pixels", 0)),
+            "payload_vs_original_file": float(impl_meta.get("payload_vs_original_file", 0)),
+            "original_file_bytes": int(impl_meta.get("original_file_bytes", 0)),
+        }
+        payload_bits = int(impl_meta.get("payload_bits", 0))
+        payload_bytes = _payload_bytes_from_dna(dna, {"payload_bits": payload_bits, "dna_pad": four_meta.get("dna_pad", impl_meta.get("dna_pad", 0))})
+        display = "Base + Local Detail"
+        meta = dict(four_meta)
+        meta.update({
+            "app_layer": "robust_image_payload",
+            "app_codec": "dna_four_methods",
+            "method": internal,
+            "method_display": display,
+            "display_name": display,
+            "compression_level": compression_level,
+            "compression_fixed": False,
+            "params": params,
             "payload_bits": int(payload_bits),
             "payload_bytes_exact": float(payload_bits / 8),
             "payload_container_bytes": int(len(payload_bytes)),
