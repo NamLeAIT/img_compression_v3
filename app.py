@@ -49,8 +49,8 @@ def _render_hero() -> None:
     st.markdown(
         """
 <div class="hero-card">
-  <div class="hero-title">🧬 DNA Storage Pipeline</div>
-  <div class="hero-subtitle">Compression-aware DNA encoding, sequencing simulation, read recovery, decoding, and validation.</div>
+  <div class="hero-title"><br/>🧬 DNA Data Storage System</div>
+  <div class="hero-subtitle"></div>
 </div>
 """,
         unsafe_allow_html=True,
