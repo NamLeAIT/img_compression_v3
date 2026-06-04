@@ -733,10 +733,10 @@ def render_panel_2_compression() -> None:
         if caption:
             st.caption(caption)
 
-        compression_level = "Fixed"
+        compression_level = "No compression" if method == "No compression" else "Balanced"
         custom_params: Dict[str, Any] = {}
 
-        if method in {"Base + WebP Detail", "Local Block Coding"}:
+        if method != "No compression":
             compression_level = st.selectbox(
                 "Compression level",
                 list_compression_levels(),
@@ -744,7 +744,87 @@ def render_panel_2_compression() -> None:
                 key="robust_image_compression_level",
             )
 
-            if method == "Base + WebP Detail":
+            if method == "Robust Low-Resolution":
+                defaults = {
+                    "High quality": {"downsample": 3, "bits_per_channel": 6},
+                    "Balanced": {"downsample": 4, "bits_per_channel": 5},
+                    "High compression": {"downsample": 6, "bits_per_channel": 4},
+                    "Custom": {"downsample": 4, "bits_per_channel": 5},
+                }[compression_level]
+
+                with st.expander("Advanced settings", expanded=(compression_level == "Custom")):
+                    custom_params["downsample"] = st.slider(
+                        "Downsample",
+                        min_value=2,
+                        max_value=12,
+                        value=int(defaults["downsample"]),
+                        step=1,
+                        key="lowres_downsample",
+                    )
+                    custom_params["bits_per_channel"] = st.slider(
+                        "Bits per channel",
+                        min_value=2,
+                        max_value=8,
+                        value=int(defaults["bits_per_channel"]),
+                        step=1,
+                        key="lowres_bits",
+                    )
+                if compression_level != "Custom":
+                    custom_params = {}
+
+            elif method == "Base + Local Detail":
+                defaults = {
+                    "High quality": {"base_downsample": 4, "base_bits": 6, "keep_coeffs": 6, "coeff_bits": 8, "q_step": 6.0},
+                    "Balanced": {"base_downsample": 4, "base_bits": 5, "keep_coeffs": 4, "coeff_bits": 8, "q_step": 8.0},
+                    "High compression": {"base_downsample": 6, "base_bits": 5, "keep_coeffs": 3, "coeff_bits": 8, "q_step": 10.0},
+                    "Custom": {"base_downsample": 4, "base_bits": 5, "keep_coeffs": 4, "coeff_bits": 8, "q_step": 8.0},
+                }[compression_level]
+
+                with st.expander("Advanced settings", expanded=(compression_level == "Custom")):
+                    custom_params["base_downsample"] = st.slider(
+                        "Base downsample",
+                        min_value=2,
+                        max_value=12,
+                        value=int(defaults["base_downsample"]),
+                        step=1,
+                        key="smart_base_downsample",
+                    )
+                    custom_params["base_bits"] = st.slider(
+                        "Base bits",
+                        min_value=2,
+                        max_value=8,
+                        value=int(defaults["base_bits"]),
+                        step=1,
+                        key="smart_base_bits",
+                    )
+                    custom_params["keep_coeffs"] = st.slider(
+                        "Keep coefficients",
+                        min_value=1,
+                        max_value=12,
+                        value=int(defaults["keep_coeffs"]),
+                        step=1,
+                        key="smart_keep_coeffs",
+                    )
+                    custom_params["coeff_bits"] = st.slider(
+                        "Coefficient bits",
+                        min_value=4,
+                        max_value=10,
+                        value=int(defaults["coeff_bits"]),
+                        step=1,
+                        key="smart_coeff_bits",
+                    )
+                    custom_params["q_step"] = st.number_input(
+                        "Residual q step",
+                        min_value=2.0,
+                        max_value=30.0,
+                        value=float(defaults["q_step"]),
+                        step=0.5,
+                        key="smart_q_step",
+                    )
+                if compression_level != "Custom":
+                    custom_params = {}
+
+            elif method == "Base + WebP Detail":
                 defaults = {
                     "High quality": {"quality": 60, "tile_size": 128, "base_downsample": 4, "base_bits": 5},
                     "Balanced": {"quality": 45, "tile_size": 128, "base_downsample": 4, "base_bits": 5},
@@ -778,12 +858,6 @@ def render_panel_2_compression() -> None:
                     custom_params["c_packet_bits"] = st.selectbox("C packet bits", c_opts, index=c_opts.index(int(defaults["c_packet_bits"])), key="block_c_bits")
                 if compression_level != "Custom":
                     custom_params = {}
-
-        elif method == "No compression":
-            compression_level = "No compression"
-        else:
-            st.caption("This method uses its built-in fixed preset.")
-
         if st.button(BUTTONS["run_data_encoding"], key="run_robust_image_compression"):
             _clear_downstream_from_storage()
             try:
